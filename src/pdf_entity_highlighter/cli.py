@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, highlight_pdf
-from pdf_entity_highlighter.ner import UndertheseaEntityDetector, VnCoreNlpEntityDetector
+from pdf_entity_highlighter.ner import VnCoreNlpEntityDetector
 from pdf_entity_highlighter.validation import (
     ConfirmedEntityDetector,
     StrictEntityValidator,
@@ -41,20 +41,16 @@ def main(argv: list[str] | None = None) -> int:
             detector = ConfirmedEntityDetector(confirmed_entities)
             validator = None
         else:
-            if args.engine == "vncorenlp":
-                detector = VnCoreNlpEntityDetector(
-                    model_dir=args.vncorenlp_dir,
-                    download=args.download_vncorenlp,
-                    min_length=args.min_length,
-                    max_heap_size=args.vncorenlp_heap,
-                )
-            else:
-                detector = UndertheseaEntityDetector(min_length=args.min_length)
+            detector = VnCoreNlpEntityDetector(
+                model_dir=args.vncorenlp_dir,
+                download=args.download_vncorenlp,
+                min_length=args.min_length,
+                max_heap_size=args.vncorenlp_heap,
+            )
             validator = StrictEntityValidator() if args.strict else None
     except ImportError as exc:
         print(str(exc), file=sys.stderr)
         print('Install dependencies with: python -m pip install -e .', file=sys.stderr)
-        print('For the optional Underthesea engine, use: python -m pip install -e ".[vi]"', file=sys.stderr)
         return 2
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         parser.error(str(exc))
@@ -122,12 +118,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Minimum entity text length to keep. Default: 2.",
-    )
-    parser.add_argument(
-        "--engine",
-        choices=["underthesea", "vncorenlp"],
-        default="vncorenlp",
-        help="NER engine to use before validation. Default: vncorenlp.",
     )
     parser.add_argument(
         "--vncorenlp-dir",

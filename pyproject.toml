@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-entity-highlighter"
-version = "0.3.0"
+version = "0.3.1"
 description = "Automatically highlight Vietnamese named entities in searchable PDF files."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,9 +16,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-vi = [
-    "underthesea>=6.8.0",
-]
 gui = [
     "PySide6>=6.7.0",
 ]

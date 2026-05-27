@@ -30,21 +30,6 @@ class Entity:
     label: str
 
 
-class UndertheseaEntityDetector:
-    def __init__(self, min_length: int = 2) -> None:
-        try:
-            from underthesea import ner
-        except ImportError as exc:
-            raise ImportError("Underthesea is required for Vietnamese NER.") from exc
-
-        self._ner = ner
-        self._min_length = min_length
-
-    def extract(self, text: str, labels: set[str]) -> list[Entity]:
-        tagged_tokens = self._ner(text)
-        return entities_from_tagged_tokens(tagged_tokens, labels, min_length=self._min_length)
-
-
 class VnCoreNlpEntityDetector:
     def __init__(
         self,
@@ -59,7 +44,7 @@ class VnCoreNlpEntityDetector:
             import py_vncorenlp
         except ImportError as exc:
             raise ImportError(
-                "py_vncorenlp is required for the VnCoreNLP engine. "
+                "py_vncorenlp is required for VnCoreNLP. "
                 "Install the project dependencies with: python -m pip install -e ."
             ) from exc
 
@@ -97,7 +82,7 @@ def entities_from_tagged_tokens(
     labels: set[str],
     min_length: int = 2,
 ) -> list[Entity]:
-    """Build entities from BIO-style NER tags returned by Underthesea."""
+    """Build entities from BIO-style NER tags."""
 
     normalized_labels = {label.upper() for label in labels}
     entities: list[Entity] = []

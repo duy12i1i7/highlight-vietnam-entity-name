@@ -5,7 +5,7 @@
 Pipeline:
 
 ```text
-PDF -> trích text từng trang -> NER engine -> strict/confirmed validation -> tìm lại vị trí trong PDF -> thêm highlight annotation -> PDF mới
+PDF -> trích text từng trang -> VnCoreNLP NER -> strict/confirmed validation -> tìm lại vị trí trong PDF -> thêm highlight annotation -> PDF mới
 ```
 
 ## Cài đặt
@@ -41,7 +41,7 @@ pdf-entity-highlighter-gui
 - Chọn thư mục lưu kết quả khi xử lý nhiều file.
 - Chọn đường dẫn file PDF đầu ra khi xử lý một file.
 - Chọn loại entity cần bôi màu: `PER`, `LOC`, `ORG`, `MISC`.
-- Dùng VnCoreNLP làm engine NER chính.
+- Dùng VnCoreNLP để nhận diện thực thể tiếng Việt.
 - Bật strict validation hoặc dùng confirmed-only list khi không chấp nhận false positive.
 
 ## Chạy bằng CLI
@@ -52,7 +52,7 @@ Mặc định chương trình highlight `PER` và `LOC`.
 pdf-entity-highlight input.pdf output-highlighted.pdf
 ```
 
-Engine mặc định là `vncorenlp` và strict validation được bật sẵn:
+VnCoreNLP và strict validation được bật sẵn:
 
 ```bash
 pdf-entity-highlight input.pdf output-highlighted.pdf
@@ -114,7 +114,7 @@ pdf-entity-highlight input.pdf output-highlighted.pdf \
 
 ## Nhãn hỗ trợ
 
-Các engine NER thường trả về các nhãn:
+VnCoreNLP trả về các nhãn:
 
 - `PER`: tên người
 - `LOC`: địa danh

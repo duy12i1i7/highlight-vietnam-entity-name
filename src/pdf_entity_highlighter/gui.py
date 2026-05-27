@@ -35,7 +35,6 @@ from PySide6.QtWidgets import (
 from pdf_entity_highlighter.batch import resolve_output_paths
 from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, HighlightResult, highlight_pdf
 from pdf_entity_highlighter.ner import (
-    UndertheseaEntityDetector,
     VnCoreNlpEntityDetector,
 )
 from pdf_entity_highlighter.validation import (
@@ -52,11 +51,6 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if "--self-test" in args:
         detector = VnCoreNlpEntityDetector(download=False)
-        entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
-        print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
-        return 0
-    if "--self-test-underthesea" in args:
-        detector = UndertheseaEntityDetector()
         entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
         print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
         return 0
@@ -318,15 +312,15 @@ class MainWindow(QMainWindow):
 
         accuracy_group = QGroupBox("Accuracy")
         accuracy_layout = QGridLayout(accuracy_group)
-        self.engine_label = QLabel("VnCoreNLP (built in)")
+        self.ner_model_label = QLabel("VnCoreNLP (built in)")
         self.strict_check = QCheckBox("Strict validation")
         self.strict_check.setChecked(True)
         self.confirmed_only_edit = QLineEdit()
         self.confirmed_only_edit.setPlaceholderText("Optional confirmed entity list")
         self.browse_confirmed_button = QPushButton("Browse")
         self.browse_confirmed_button.clicked.connect(self.choose_confirmed_list)
-        accuracy_layout.addWidget(QLabel("NER engine"), 0, 0)
-        accuracy_layout.addWidget(self.engine_label, 0, 1)
+        accuracy_layout.addWidget(QLabel("NER model"), 0, 0)
+        accuracy_layout.addWidget(self.ner_model_label, 0, 1)
         accuracy_layout.addWidget(self.strict_check, 1, 0, 1, 2)
         accuracy_layout.addWidget(self.confirmed_only_edit, 2, 0)
         accuracy_layout.addWidget(self.browse_confirmed_button, 2, 1)

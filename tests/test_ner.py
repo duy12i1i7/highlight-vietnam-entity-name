@@ -10,7 +10,7 @@ from pdf_entity_highlighter.ner import (
 )
 
 
-def test_entities_from_underthesea_bio_tags() -> None:
+def test_entities_from_bio_tags() -> None:
     tagged_tokens = [
         ("Ông", "Nc", "B-NP", "O"),
         ("Nguyễn", "Np", "B-NP", "B-PER"),
