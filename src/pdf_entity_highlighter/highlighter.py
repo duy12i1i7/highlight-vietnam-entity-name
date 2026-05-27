@@ -22,12 +22,25 @@ class EntityDetector(Protocol):
         """Return named entities from plain text."""
 
 
+class EntityValidator(Protocol):
+    def validate(self, entity: Entity) -> tuple[bool, str | None]:
+        """Return whether an entity should be highlighted."""
+
+
 @dataclass(frozen=True)
 class PageHighlight:
     page: int
     text: str
     label: str
     matches: int
+
+
+@dataclass(frozen=True)
+class SkippedEntity:
+    page: int
+    text: str
+    label: str
+    reason: str
 
 
 @dataclass
@@ -37,6 +50,7 @@ class HighlightResult:
     pages_processed: int = 0
     pages_without_text: list[int] = field(default_factory=list)
     highlights: list[PageHighlight] = field(default_factory=list)
+    skipped: list[SkippedEntity] = field(default_factory=list)
 
     @property
     def total_highlights(self) -> int:
@@ -63,6 +77,15 @@ class HighlightResult:
                 }
                 for item in self.highlights
             ],
+            "skipped": [
+                {
+                    "page": item.page + 1,
+                    "text": item.text,
+                    "label": item.label,
+                    "reason": item.reason,
+                }
+                for item in self.skipped
+            ],
         }
 
 
@@ -73,6 +96,7 @@ def highlight_pdf(
     labels: set[str],
     colors: dict[str, tuple[float, float, float]] | None = None,
     opacity: float = 0.35,
+    validator: EntityValidator | None = None,
 ) -> HighlightResult:
     """Highlight detected entities in a PDF and save a new PDF."""
 
@@ -99,6 +123,18 @@ def highlight_pdf(
             for entity in unique_entities(entities):
                 if entity.label not in normalized_labels:
                     continue
+                if validator:
+                    accepted, reason = validator.validate(entity)
+                    if not accepted:
+                        result.skipped.append(
+                            SkippedEntity(
+                                page=page_index,
+                                text=entity.text,
+                                label=entity.label,
+                                reason=reason or "rejected",
+                            )
+                        )
+                        continue
 
                 quads = page.search_for(entity.text, quads=True)
                 if not quads:

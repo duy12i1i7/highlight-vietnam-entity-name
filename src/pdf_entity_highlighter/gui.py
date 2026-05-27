@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -33,7 +34,16 @@ from PySide6.QtWidgets import (
 
 from pdf_entity_highlighter.batch import resolve_output_paths
 from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, HighlightResult, highlight_pdf
-from pdf_entity_highlighter.ner import UndertheseaEntityDetector
+from pdf_entity_highlighter.ner import (
+    UndertheseaEntityDetector,
+    VnCoreNlpEntityDetector,
+    default_vncorenlp_dir,
+)
+from pdf_entity_highlighter.validation import (
+    ConfirmedEntityDetector,
+    StrictEntityValidator,
+    load_confirmed_entities,
+)
 
 
 APP_NAME = "PDF Entity Highlighter"
@@ -43,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if "--self-test" in args:
         detector = UndertheseaEntityDetector()
+        entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
+        print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
+        return 0
+    if "--self-test-vncorenlp" in args:
+        detector = VnCoreNlpEntityDetector(download=False)
         entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
         print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
         return 0
@@ -125,16 +140,45 @@ class HighlightWorker(QObject):
         output_paths: dict[Path, Path],
         labels: set[str],
         opacity: float,
+        strict: bool,
+        confirmed_only_path: Path | None,
+        engine: str,
+        vncorenlp_dir: Path,
+        download_vncorenlp: bool,
     ) -> None:
         super().__init__()
         self.output_paths = output_paths
         self.labels = labels
         self.opacity = opacity
+        self.strict = strict
+        self.confirmed_only_path = confirmed_only_path
+        self.engine = engine
+        self.vncorenlp_dir = vncorenlp_dir
+        self.download_vncorenlp = download_vncorenlp
 
     def run(self) -> None:
         try:
-            self.log.emit("Loading Vietnamese NER model...")
-            detector = UndertheseaEntityDetector()
+            validator = StrictEntityValidator() if self.strict else None
+            if self.confirmed_only_path:
+                self.log.emit("Loading confirmed entity list...")
+                confirmed_entities = load_confirmed_entities(self.confirmed_only_path)
+                if not confirmed_entities:
+                    raise ValueError("Confirmed entity list is empty.")
+                detector = ConfirmedEntityDetector(confirmed_entities)
+                validator = None
+                self.log.emit("Confirmed-only mode is enabled. NER candidates will not be used.")
+            else:
+                if self.engine == "vncorenlp":
+                    self.log.emit("Loading VnCoreNLP model...")
+                    detector = VnCoreNlpEntityDetector(
+                        model_dir=self.vncorenlp_dir,
+                        download=self.download_vncorenlp,
+                    )
+                else:
+                    self.log.emit("Loading Underthesea NER model...")
+                    detector = UndertheseaEntityDetector()
+                if validator:
+                    self.log.emit("Strict validation is enabled. Some valid entities may be skipped.")
             results: list[HighlightResult] = []
             total = len(self.output_paths)
 
@@ -147,6 +191,7 @@ class HighlightWorker(QObject):
                     labels=self.labels,
                     colors=DEFAULT_COLORS,
                     opacity=self.opacity,
+                    validator=validator,
                 )
                 results.append(result)
                 self.log.emit(
@@ -156,6 +201,8 @@ class HighlightWorker(QObject):
                 if result.pages_without_text:
                     pages = ", ".join(str(page + 1) for page in result.pages_without_text)
                     self.log.emit(f"Warning: no extractable text on page(s): {pages}")
+                if result.skipped:
+                    self.log.emit(f"Skipped by validation: {len(result.skipped)} candidate(s)")
                 self.progress.emit(index, total)
 
             self.finished.emit(results)
@@ -246,6 +293,33 @@ class MainWindow(QMainWindow):
         options_layout.setColumnStretch(1, 1)
         layout.addWidget(options_frame)
 
+        accuracy_group = QGroupBox("Accuracy")
+        accuracy_layout = QGridLayout(accuracy_group)
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItem("VnCoreNLP", "vncorenlp")
+        self.engine_combo.addItem("Underthesea", "underthesea")
+        self.strict_check = QCheckBox("Strict validation")
+        self.strict_check.setChecked(True)
+        self.vncorenlp_dir_edit = QLineEdit(str(default_vncorenlp_dir()))
+        self.vncorenlp_dir_edit.setPlaceholderText("VnCoreNLP model folder")
+        self.browse_vncorenlp_button = QPushButton("Browse")
+        self.browse_vncorenlp_button.clicked.connect(self.choose_vncorenlp_dir)
+        self.download_vncorenlp_check = QCheckBox("Download VnCoreNLP model if missing")
+        self.download_vncorenlp_check.setChecked(True)
+        self.confirmed_only_edit = QLineEdit()
+        self.confirmed_only_edit.setPlaceholderText("Optional confirmed entity list")
+        self.browse_confirmed_button = QPushButton("Browse")
+        self.browse_confirmed_button.clicked.connect(self.choose_confirmed_list)
+        accuracy_layout.addWidget(QLabel("NER engine"), 0, 0)
+        accuracy_layout.addWidget(self.engine_combo, 0, 1)
+        accuracy_layout.addWidget(self.strict_check, 1, 0, 1, 2)
+        accuracy_layout.addWidget(self.vncorenlp_dir_edit, 2, 0)
+        accuracy_layout.addWidget(self.browse_vncorenlp_button, 2, 1)
+        accuracy_layout.addWidget(self.download_vncorenlp_check, 3, 0, 1, 2)
+        accuracy_layout.addWidget(self.confirmed_only_edit, 4, 0)
+        accuracy_layout.addWidget(self.browse_confirmed_button, 4, 1)
+        layout.addWidget(accuracy_group)
+
         action_row = QHBoxLayout()
         self.start_button = QPushButton("Start Highlighting")
         self.start_button.clicked.connect(self.start_highlighting)
@@ -305,6 +379,21 @@ class MainWindow(QMainWindow):
         if directory:
             self.output_edit.setText(directory)
 
+    def choose_confirmed_list(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select confirmed entity list",
+            "",
+            "Text files (*.txt *.csv);;All files (*)",
+        )
+        if file_path:
+            self.confirmed_only_edit.setText(file_path)
+
+    def choose_vncorenlp_dir(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Select VnCoreNLP model folder")
+        if directory:
+            self.vncorenlp_dir_edit.setText(directory)
+
     def update_output_hint(self) -> None:
         count = self.file_list.count()
         if count == 0:
@@ -321,6 +410,8 @@ class MainWindow(QMainWindow):
         input_files = self.file_list.paths()
         output_text = self.output_edit.text().strip()
         labels = self.selected_labels()
+        confirmed_only_text = self.confirmed_only_edit.text().strip()
+        vncorenlp_dir_text = self.vncorenlp_dir_edit.text().strip()
 
         if not input_files:
             QMessageBox.warning(self, APP_NAME, "Select at least one PDF file.")
@@ -342,10 +433,27 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setMaximum(len(output_paths))
         self.log_view.clear()
+        confirmed_only_path = Path(confirmed_only_text).expanduser().resolve() if confirmed_only_text else None
+        if confirmed_only_path and not confirmed_only_path.exists():
+            QMessageBox.warning(self, APP_NAME, "Confirmed entity list does not exist.")
+            self.set_running(False)
+            return
+
         self.append_log(f"Selected labels: {', '.join(sorted(labels))}")
+        engine = self.engine_combo.currentData()
+        vncorenlp_dir = Path(vncorenlp_dir_text).expanduser().resolve() if vncorenlp_dir_text else default_vncorenlp_dir()
 
         self.thread = QThread()
-        self.worker = HighlightWorker(output_paths, labels, self.opacity_spin.value())
+        self.worker = HighlightWorker(
+            output_paths,
+            labels,
+            self.opacity_spin.value(),
+            self.strict_check.isChecked(),
+            confirmed_only_path,
+            str(engine),
+            vncorenlp_dir,
+            self.download_vncorenlp_check.isChecked(),
+        )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.on_progress)
@@ -365,6 +473,13 @@ class MainWindow(QMainWindow):
         self.remove_button.setEnabled(not running)
         self.clear_button.setEnabled(not running)
         self.browse_output_button.setEnabled(not running)
+        self.browse_confirmed_button.setEnabled(not running)
+        self.confirmed_only_edit.setEnabled(not running)
+        self.strict_check.setEnabled(not running)
+        self.engine_combo.setEnabled(not running)
+        self.vncorenlp_dir_edit.setEnabled(not running)
+        self.browse_vncorenlp_button.setEnabled(not running)
+        self.download_vncorenlp_check.setEnabled(not running)
 
     def append_log(self, message: str) -> None:
         self.log_view.append(message)

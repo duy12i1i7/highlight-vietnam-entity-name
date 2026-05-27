@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 
 from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, highlight_pdf
-from pdf_entity_highlighter.ner import UndertheseaEntityDetector
+from pdf_entity_highlighter.ner import UndertheseaEntityDetector, VnCoreNlpEntityDetector, default_vncorenlp_dir
+from pdf_entity_highlighter.validation import (
+    ConfirmedEntityDetector,
+    StrictEntityValidator,
+    load_confirmed_entities,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,11 +34,29 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
 
     try:
-        detector = UndertheseaEntityDetector(min_length=args.min_length)
+        if args.confirmed_only:
+            confirmed_entities = load_confirmed_entities(args.confirmed_only)
+            if not confirmed_entities:
+                parser.error("Confirmed entity list is empty.")
+            detector = ConfirmedEntityDetector(confirmed_entities)
+            validator = None
+        else:
+            if args.engine == "vncorenlp":
+                detector = VnCoreNlpEntityDetector(
+                    model_dir=args.vncorenlp_dir,
+                    download=args.download_vncorenlp,
+                    min_length=args.min_length,
+                    max_heap_size=args.vncorenlp_heap,
+                )
+            else:
+                detector = UndertheseaEntityDetector(min_length=args.min_length)
+            validator = StrictEntityValidator() if args.strict else None
     except ImportError as exc:
         print(str(exc), file=sys.stderr)
-        print('Install the Vietnamese NER dependency with: python -m pip install -e ".[vi]"', file=sys.stderr)
+        print('Install dependencies with: python -m pip install -e ".[vi,vncorenlp]"', file=sys.stderr)
         return 2
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        parser.error(str(exc))
 
     result = highlight_pdf(
         input_path=input_path,
@@ -42,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         labels=set(args.labels),
         colors=colors,
         opacity=args.opacity,
+        validator=validator,
     )
 
     if args.report:
@@ -56,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{result.total_entities} unique entity mention(s), "
         f"{result.pages_processed} page(s) processed."
     )
+    if result.skipped:
+        print(f"Skipped by validation: {len(result.skipped)} candidate(s).")
 
     if result.pages_without_text:
         pages = ", ".join(str(page + 1) for page in result.pages_without_text)
@@ -95,6 +121,40 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Minimum entity text length to keep. Default: 2.",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["underthesea", "vncorenlp"],
+        default="underthesea",
+        help="NER engine to use before validation. Default: underthesea.",
+    )
+    parser.add_argument(
+        "--vncorenlp-dir",
+        default=str(default_vncorenlp_dir()),
+        help="VnCoreNLP model directory. Default: ~/.pdf-entity-highlighter/vncorenlp.",
+    )
+    parser.add_argument(
+        "--download-vncorenlp",
+        action="store_true",
+        help="Download VnCoreNLP jar and model files into --vncorenlp-dir before running.",
+    )
+    parser.add_argument(
+        "--vncorenlp-heap",
+        default="-Xmx2g",
+        help="Java heap setting for VnCoreNLP. Default: -Xmx2g.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Use conservative validation rules to reduce false positives. This may miss valid entities.",
+    )
+    parser.add_argument(
+        "--confirmed-only",
+        metavar="FILE",
+        help=(
+            "Bypass NER and highlight only approved entities from a UTF-8 text file. "
+            "Each line can be TEXT or LABEL,TEXT. This is the only mode suitable when false positives are unacceptable."
+        ),
     )
     parser.add_argument("--report", help="Optional path for a JSON summary report.")
     return parser
