@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-entity-highlighter"
+version = "0.1.0"
+description = "Automatically highlight Vietnamese named entities in searchable PDF files."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Codex" }]
+dependencies = [
+    "PyMuPDF>=1.24.0",
+]
+
+[project.optional-dependencies]
+vi = [
+    "underthesea>=6.8.0",
+]
+gui = [
+    "PySide6>=6.7.0",
+]
+build = [
+    "pyinstaller>=6.10.0",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+pdf-entity-highlight = "pdf_entity_highlighter.cli:main"
+pdf-entity-highlighter-gui = "pdf_entity_highlighter.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
