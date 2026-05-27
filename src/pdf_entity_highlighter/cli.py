@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, highlight_pdf
-from pdf_entity_highlighter.ner import UndertheseaEntityDetector, VnCoreNlpEntityDetector, default_vncorenlp_dir
+from pdf_entity_highlighter.ner import UndertheseaEntityDetector, VnCoreNlpEntityDetector
 from pdf_entity_highlighter.validation import (
     ConfirmedEntityDetector,
     StrictEntityValidator,
@@ -53,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
             validator = StrictEntityValidator() if args.strict else None
     except ImportError as exc:
         print(str(exc), file=sys.stderr)
-        print('Install dependencies with: python -m pip install -e ".[vi,vncorenlp]"', file=sys.stderr)
+        print('Install dependencies with: python -m pip install -e .', file=sys.stderr)
+        print('For the optional Underthesea engine, use: python -m pip install -e ".[vi]"', file=sys.stderr)
         return 2
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         parser.error(str(exc))
@@ -125,13 +126,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--engine",
         choices=["underthesea", "vncorenlp"],
-        default="underthesea",
-        help="NER engine to use before validation. Default: underthesea.",
+        default="vncorenlp",
+        help="NER engine to use before validation. Default: vncorenlp.",
     )
     parser.add_argument(
         "--vncorenlp-dir",
-        default=str(default_vncorenlp_dir()),
-        help="VnCoreNLP model directory. Default: ~/.pdf-entity-highlighter/vncorenlp.",
+        default=None,
+        help=(
+            "VnCoreNLP model directory. Default: bundled model in the desktop app, "
+            "or ~/.pdf-entity-highlighter/vncorenlp when running from source."
+        ),
     )
     parser.add_argument(
         "--download-vncorenlp",
@@ -146,7 +150,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Use conservative validation rules to reduce false positives. This may miss valid entities.",
+        default=True,
+        help="Use conservative validation rules to reduce false positives. Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-strict",
+        action="store_false",
+        dest="strict",
+        help="Disable strict validation.",
     )
     parser.add_argument(
         "--confirmed-only",

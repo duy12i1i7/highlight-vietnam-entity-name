@@ -4,13 +4,13 @@ import sys
 import json
 from pathlib import Path
 
+import fitz
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -37,7 +37,6 @@ from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, HighlightResult, 
 from pdf_entity_highlighter.ner import (
     UndertheseaEntityDetector,
     VnCoreNlpEntityDetector,
-    default_vncorenlp_dir,
 )
 from pdf_entity_highlighter.validation import (
     ConfirmedEntityDetector,
@@ -52,6 +51,11 @@ APP_NAME = "PDF Entity Highlighter"
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if "--self-test" in args:
+        detector = VnCoreNlpEntityDetector(download=False)
+        entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
+        print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
+        return 0
+    if "--self-test-underthesea" in args:
         detector = UndertheseaEntityDetector()
         entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
         print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
@@ -130,7 +134,7 @@ class PdfListWidget(QListWidget):
 
 
 class HighlightWorker(QObject):
-    progress = Signal(int, int)
+    progress = Signal(int, int, str)
     log = Signal(str)
     finished = Signal(list)
     failed = Signal(str)
@@ -142,9 +146,6 @@ class HighlightWorker(QObject):
         opacity: float,
         strict: bool,
         confirmed_only_path: Path | None,
-        engine: str,
-        vncorenlp_dir: Path,
-        download_vncorenlp: bool,
     ) -> None:
         super().__init__()
         self.output_paths = output_paths
@@ -152,12 +153,14 @@ class HighlightWorker(QObject):
         self.opacity = opacity
         self.strict = strict
         self.confirmed_only_path = confirmed_only_path
-        self.engine = engine
-        self.vncorenlp_dir = vncorenlp_dir
-        self.download_vncorenlp = download_vncorenlp
 
     def run(self) -> None:
         try:
+            page_counts = self.count_pages()
+            total_units = 1 + sum(page_counts[input_path] + 1 for input_path in self.output_paths)
+            completed_units = 0
+            self.progress.emit(completed_units, total_units, "Preparing detector")
+
             validator = StrictEntityValidator() if self.strict else None
             if self.confirmed_only_path:
                 self.log.emit("Loading confirmed entity list...")
@@ -168,22 +171,30 @@ class HighlightWorker(QObject):
                 validator = None
                 self.log.emit("Confirmed-only mode is enabled. NER candidates will not be used.")
             else:
-                if self.engine == "vncorenlp":
-                    self.log.emit("Loading VnCoreNLP model...")
-                    detector = VnCoreNlpEntityDetector(
-                        model_dir=self.vncorenlp_dir,
-                        download=self.download_vncorenlp,
-                    )
-                else:
-                    self.log.emit("Loading Underthesea NER model...")
-                    detector = UndertheseaEntityDetector()
+                self.log.emit("Loading built-in VnCoreNLP model...")
+                detector = VnCoreNlpEntityDetector(
+                    download=False,
+                    prepare_progress_callback=lambda _current, _total, message: self.progress.emit(
+                        completed_units,
+                        total_units,
+                        message,
+                    ),
+                )
                 if validator:
                     self.log.emit("Strict validation is enabled. Some valid entities may be skipped.")
+            completed_units += 1
+            self.progress.emit(completed_units, total_units, "Detector ready")
+
             results: list[HighlightResult] = []
             total = len(self.output_paths)
 
             for index, (input_path, output_path) in enumerate(self.output_paths.items(), start=1):
                 self.log.emit(f"Processing: {input_path.name}")
+                file_start = completed_units
+
+                def on_file_progress(current: int, _total: int, message: str) -> None:
+                    self.progress.emit(file_start + current, total_units, f"{input_path.name}: {message}")
+
                 result = highlight_pdf(
                     input_path=input_path,
                     output_path=output_path,
@@ -192,7 +203,9 @@ class HighlightWorker(QObject):
                     colors=DEFAULT_COLORS,
                     opacity=self.opacity,
                     validator=validator,
+                    progress_callback=on_file_progress,
                 )
+                completed_units = file_start + page_counts[input_path] + 1
                 results.append(result)
                 self.log.emit(
                     f"Saved: {output_path} "
@@ -203,11 +216,21 @@ class HighlightWorker(QObject):
                     self.log.emit(f"Warning: no extractable text on page(s): {pages}")
                 if result.skipped:
                     self.log.emit(f"Skipped by validation: {len(result.skipped)} candidate(s)")
-                self.progress.emit(index, total)
+                self.progress.emit(completed_units, total_units, f"Completed {index}/{total} file(s)")
 
             self.finished.emit(results)
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def count_pages(self) -> dict[Path, int]:
+        counts: dict[Path, int] = {}
+        for input_path in self.output_paths:
+            doc = fitz.open(input_path)
+            try:
+                counts[input_path] = doc.page_count
+            finally:
+                doc.close()
+        return counts
 
 
 class MainWindow(QMainWindow):
@@ -295,29 +318,18 @@ class MainWindow(QMainWindow):
 
         accuracy_group = QGroupBox("Accuracy")
         accuracy_layout = QGridLayout(accuracy_group)
-        self.engine_combo = QComboBox()
-        self.engine_combo.addItem("VnCoreNLP", "vncorenlp")
-        self.engine_combo.addItem("Underthesea", "underthesea")
+        self.engine_label = QLabel("VnCoreNLP (built in)")
         self.strict_check = QCheckBox("Strict validation")
         self.strict_check.setChecked(True)
-        self.vncorenlp_dir_edit = QLineEdit(str(default_vncorenlp_dir()))
-        self.vncorenlp_dir_edit.setPlaceholderText("VnCoreNLP model folder")
-        self.browse_vncorenlp_button = QPushButton("Browse")
-        self.browse_vncorenlp_button.clicked.connect(self.choose_vncorenlp_dir)
-        self.download_vncorenlp_check = QCheckBox("Download VnCoreNLP model if missing")
-        self.download_vncorenlp_check.setChecked(True)
         self.confirmed_only_edit = QLineEdit()
         self.confirmed_only_edit.setPlaceholderText("Optional confirmed entity list")
         self.browse_confirmed_button = QPushButton("Browse")
         self.browse_confirmed_button.clicked.connect(self.choose_confirmed_list)
         accuracy_layout.addWidget(QLabel("NER engine"), 0, 0)
-        accuracy_layout.addWidget(self.engine_combo, 0, 1)
+        accuracy_layout.addWidget(self.engine_label, 0, 1)
         accuracy_layout.addWidget(self.strict_check, 1, 0, 1, 2)
-        accuracy_layout.addWidget(self.vncorenlp_dir_edit, 2, 0)
-        accuracy_layout.addWidget(self.browse_vncorenlp_button, 2, 1)
-        accuracy_layout.addWidget(self.download_vncorenlp_check, 3, 0, 1, 2)
-        accuracy_layout.addWidget(self.confirmed_only_edit, 4, 0)
-        accuracy_layout.addWidget(self.browse_confirmed_button, 4, 1)
+        accuracy_layout.addWidget(self.confirmed_only_edit, 2, 0)
+        accuracy_layout.addWidget(self.browse_confirmed_button, 2, 1)
         layout.addWidget(accuracy_group)
 
         action_row = QHBoxLayout()
@@ -326,8 +338,14 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.progress_label = QLabel("Ready")
+        self.progress_label.setObjectName("hint")
+        progress_layout = QVBoxLayout()
+        progress_layout.setSpacing(4)
+        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_label)
         action_row.addWidget(self.start_button)
-        action_row.addWidget(self.progress_bar)
+        action_row.addLayout(progress_layout)
         layout.addLayout(action_row)
 
         self.log_view = QTextEdit()
@@ -389,11 +407,6 @@ class MainWindow(QMainWindow):
         if file_path:
             self.confirmed_only_edit.setText(file_path)
 
-    def choose_vncorenlp_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select VnCoreNLP model folder")
-        if directory:
-            self.vncorenlp_dir_edit.setText(directory)
-
     def update_output_hint(self) -> None:
         count = self.file_list.count()
         if count == 0:
@@ -411,7 +424,6 @@ class MainWindow(QMainWindow):
         output_text = self.output_edit.text().strip()
         labels = self.selected_labels()
         confirmed_only_text = self.confirmed_only_edit.text().strip()
-        vncorenlp_dir_text = self.vncorenlp_dir_edit.text().strip()
 
         if not input_files:
             QMessageBox.warning(self, APP_NAME, "Select at least one PDF file.")
@@ -431,7 +443,8 @@ class MainWindow(QMainWindow):
 
         self.set_running(True)
         self.progress_bar.setValue(0)
-        self.progress_bar.setMaximum(len(output_paths))
+        self.progress_bar.setMaximum(100)
+        self.progress_label.setText("Preparing")
         self.log_view.clear()
         confirmed_only_path = Path(confirmed_only_text).expanduser().resolve() if confirmed_only_text else None
         if confirmed_only_path and not confirmed_only_path.exists():
@@ -440,8 +453,6 @@ class MainWindow(QMainWindow):
             return
 
         self.append_log(f"Selected labels: {', '.join(sorted(labels))}")
-        engine = self.engine_combo.currentData()
-        vncorenlp_dir = Path(vncorenlp_dir_text).expanduser().resolve() if vncorenlp_dir_text else default_vncorenlp_dir()
 
         self.thread = QThread()
         self.worker = HighlightWorker(
@@ -450,9 +461,6 @@ class MainWindow(QMainWindow):
             self.opacity_spin.value(),
             self.strict_check.isChecked(),
             confirmed_only_path,
-            str(engine),
-            vncorenlp_dir,
-            self.download_vncorenlp_check.isChecked(),
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -476,26 +484,25 @@ class MainWindow(QMainWindow):
         self.browse_confirmed_button.setEnabled(not running)
         self.confirmed_only_edit.setEnabled(not running)
         self.strict_check.setEnabled(not running)
-        self.engine_combo.setEnabled(not running)
-        self.vncorenlp_dir_edit.setEnabled(not running)
-        self.browse_vncorenlp_button.setEnabled(not running)
-        self.download_vncorenlp_check.setEnabled(not running)
 
     def append_log(self, message: str) -> None:
         self.log_view.append(message)
 
-    def on_progress(self, current: int, total: int) -> None:
+    def on_progress(self, current: int, total: int, message: str) -> None:
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
+        self.progress_label.setText(message)
 
     def on_finished(self, results: list[HighlightResult]) -> None:
         total_highlights = sum(result.total_highlights for result in results)
         self.append_log(f"Done. Created {len(results)} file(s), {total_highlights} highlight(s).")
+        self.progress_label.setText("Done")
         self.set_running(False)
         QMessageBox.information(self, APP_NAME, "Highlighting completed.")
 
     def on_failed(self, message: str) -> None:
         self.append_log(f"Error: {message}")
+        self.progress_label.setText("Failed")
         self.set_running(False)
         QMessageBox.critical(self, APP_NAME, message)
 

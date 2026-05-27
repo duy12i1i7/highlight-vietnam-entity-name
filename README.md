@@ -16,7 +16,7 @@ Khuyến nghị dùng Python 3.12 vì một số thư viện NLP tiếng Việt 
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[vi,vncorenlp,gui]"
+python -m pip install -e ".[gui]"
 ```
 
 Trên Windows:
@@ -25,7 +25,7 @@ Trên Windows:
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[vi,vncorenlp,gui]"
+python -m pip install -e ".[gui]"
 ```
 
 ## Chạy ứng dụng desktop
@@ -41,7 +41,7 @@ pdf-entity-highlighter-gui
 - Chọn thư mục lưu kết quả khi xử lý nhiều file.
 - Chọn đường dẫn file PDF đầu ra khi xử lý một file.
 - Chọn loại entity cần bôi màu: `PER`, `LOC`, `ORG`, `MISC`.
-- Chọn engine NER: VnCoreNLP hoặc Underthesea.
+- Dùng VnCoreNLP làm engine NER chính.
 - Bật strict validation hoặc dùng confirmed-only list khi không chấp nhận false positive.
 
 ## Chạy bằng CLI
@@ -52,25 +52,28 @@ Mặc định chương trình highlight `PER` và `LOC`.
 pdf-entity-highlight input.pdf output-highlighted.pdf
 ```
 
-Engine mặc định là `underthesea`. Dùng VnCoreNLP để có NER tiếng Việt tốt hơn:
+Engine mặc định là `vncorenlp` và strict validation được bật sẵn:
 
 ```bash
-pdf-entity-highlight input.pdf output-highlighted.pdf \
-  --engine vncorenlp \
-  --download-vncorenlp \
-  --strict
+pdf-entity-highlight input.pdf output-highlighted.pdf
 ```
 
-VnCoreNLP cần Java 1.8+. Trên macOS có thể cài bằng:
+Khi chạy từ mã nguồn, VnCoreNLP cần model và Java 1.8+. Có thể tải model bằng:
+
+```bash
+pdf-entity-highlight input.pdf output-highlighted.pdf --download-vncorenlp
+```
+
+Trên macOS có thể cài Java bằng:
 
 ```bash
 brew install openjdk@17
 ```
 
-Chế độ ít false positive hơn:
+Tắt strict validation nếu cần bắt nhiều candidate hơn:
 
 ```bash
-pdf-entity-highlight input.pdf output-highlighted.pdf --strict
+pdf-entity-highlight input.pdf output-highlighted.pdf --no-strict
 ```
 
 Khi không chấp nhận false positive, dùng danh sách đã duyệt và bỏ qua NER:
@@ -130,7 +133,7 @@ Các engine NER thường trả về các nhãn:
 Cài dependency build:
 
 ```bash
-python -m pip install -e ".[vi,vncorenlp,gui,build]"
+python -m pip install -e ".[gui,build]"
 ```
 
 Build app cho hệ điều hành hiện tại:
@@ -141,11 +144,13 @@ python scripts/build_app.py
 
 Kết quả nằm trong thư mục `dist/`.
 
+Build desktop sẽ nhúng sẵn VnCoreNLP model và Java runtime vào app, nên người dùng tải release là chạy được luôn mà không phải tải model ở lần mở đầu tiên.
+
 Lưu ý: PyInstaller cần build trên đúng hệ điều hành đích. Muốn có đủ bản Windows, macOS và Ubuntu, dùng workflow GitHub Actions tại `.github/workflows/build-app.yml`; workflow này build artifact riêng cho từng OS.
 
 ## Kiểm thử
 
 ```bash
-python -m pip install -e ".[vi,vncorenlp,gui,dev]"
+python -m pip install -e ".[gui,dev]"
 pytest
 ```

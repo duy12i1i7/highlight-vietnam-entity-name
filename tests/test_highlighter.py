@@ -38,3 +38,27 @@ def test_highlight_pdf_adds_annotations(tmp_path: Path) -> None:
         highlighted.close()
 
     assert len(annotations) == 2
+
+
+def test_highlight_pdf_reports_page_progress(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.pdf"
+    output_path = tmp_path / "output.pdf"
+
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "Nguyen Van A o Ha Noi.")
+    doc.new_page().insert_text((72, 72), "Nguyen Van A o Ha Noi.")
+    doc.save(input_path)
+    doc.close()
+
+    events: list[tuple[int, int, str]] = []
+    highlight_pdf(
+        input_path,
+        output_path,
+        FakeDetector(),
+        {"PER", "LOC"},
+        progress_callback=lambda current, total, message: events.append((current, total, message)),
+    )
+
+    assert events[0] == (0, 3, "Opened PDF")
+    assert events[-1] == (3, 3, "Saved output PDF")
+    assert [event[0] for event in events] == [0, 1, 2, 2, 3]

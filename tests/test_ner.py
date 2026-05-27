@@ -1,4 +1,13 @@
-from pdf_entity_highlighter.ner import Entity, entities_from_tagged_tokens, entities_from_vncorenlp_annotation
+import os
+from pathlib import Path
+
+from pdf_entity_highlighter.ner import (
+    Entity,
+    bundled_java_home,
+    entities_from_tagged_tokens,
+    entities_from_vncorenlp_annotation,
+    prepare_default_vncorenlp_model,
+)
 
 
 def test_entities_from_underthesea_bio_tags() -> None:
@@ -45,3 +54,37 @@ def test_entities_from_vncorenlp_annotation() -> None:
         Entity("Nguyễn Văn A", "PER"),
         Entity("Hà Nội", "LOC"),
     ]
+
+
+def test_prepare_default_vncorenlp_model_copies_bundled_model(tmp_path: Path, monkeypatch) -> None:
+    model_dir = tmp_path / "vncorenlp"
+    files = [
+        "VnCoreNLP-1.2.jar",
+        "models/wordsegmenter/vi-vocab",
+        "models/wordsegmenter/wordsegmenter.rdr",
+        "models/postagger/vi-tagger",
+        "models/ner/vi-500brownclusters.xz",
+        "models/ner/vi-ner.xz",
+        "models/ner/vi-pretrainedembeddings.xz",
+    ]
+    for relative_path in files:
+        path = model_dir / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative_path, encoding="utf-8")
+    monkeypatch.setattr("sys._MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    prepared_dir = prepare_default_vncorenlp_model()
+
+    assert prepared_dir == tmp_path / "home" / ".pdf-entity-highlighter" / "vncorenlp"
+    assert (prepared_dir / "models" / "wordsegmenter" / "wordsegmenter.rdr").exists()
+
+
+def test_bundled_java_home_detects_packaged_runtime(tmp_path: Path, monkeypatch) -> None:
+    executable = "java.exe" if os.name == "nt" else "java"
+    java_bin = tmp_path / "java-runtime" / "bin"
+    java_bin.mkdir(parents=True)
+    (java_bin / executable).write_text("java", encoding="utf-8")
+    monkeypatch.setattr("sys._MEIPASS", str(tmp_path), raising=False)
+
+    assert bundled_java_home() == tmp_path / "java-runtime"

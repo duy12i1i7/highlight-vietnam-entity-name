@@ -4,10 +4,24 @@ import re
 import os
 import shutil
 import subprocess
+import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+
+VNCORENLP_MODEL_FILES = {
+    "VnCoreNLP-1.2.jar": "VnCoreNLP-1.2.jar",
+    "models/wordsegmenter/vi-vocab": "models/wordsegmenter/vi-vocab",
+    "models/wordsegmenter/wordsegmenter.rdr": "models/wordsegmenter/wordsegmenter.rdr",
+    "models/postagger/vi-tagger": "models/postagger/vi-tagger",
+    "models/ner/vi-500brownclusters.xz": "models/ner/vi-500brownclusters.xz",
+    "models/ner/vi-ner.xz": "models/ner/vi-ner.xz",
+    "models/ner/vi-pretrainedembeddings.xz": "models/ner/vi-pretrainedembeddings.xz",
+}
+
+ModelProgressCallback = Callable[[int, int, str], None]
 
 
 @dataclass(frozen=True)
@@ -38,6 +52,7 @@ class VnCoreNlpEntityDetector:
         download: bool = False,
         min_length: int = 2,
         max_heap_size: str = "-Xmx2g",
+        prepare_progress_callback: ModelProgressCallback | None = None,
     ) -> None:
         ensure_java_runtime()
         try:
@@ -45,10 +60,14 @@ class VnCoreNlpEntityDetector:
         except ImportError as exc:
             raise ImportError(
                 "py_vncorenlp is required for the VnCoreNLP engine. "
-                'Install it with: python -m pip install -e ".[vncorenlp]"'
+                "Install the project dependencies with: python -m pip install -e ."
             ) from exc
 
-        self.model_dir = Path(model_dir).expanduser().resolve() if model_dir else default_vncorenlp_dir()
+        self.model_dir = (
+            Path(model_dir).expanduser().resolve()
+            if model_dir
+            else prepare_default_vncorenlp_model(prepare_progress_callback)
+        )
         if download:
             download_vncorenlp_model(self.model_dir)
         if not vncorenlp_model_exists(self.model_dir):
@@ -196,15 +215,17 @@ def dedupe_entities(entities: list[Entity]) -> list[Entity]:
 
 
 def ensure_java_runtime() -> None:
-    if not os.environ.get("JAVA_HOME"):
-        for candidate in (
-            Path("/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"),
-            Path("/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"),
-            Path("/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"),
-            Path("/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home"),
-        ):
+    bundled_home = bundled_java_home()
+    if bundled_home:
+        os.environ["JAVA_HOME"] = str(bundled_home)
+        prepend_path(bundled_home / "bin")
+    elif os.environ.get("JAVA_HOME"):
+        prepend_path(Path(os.environ["JAVA_HOME"]) / "bin")
+    else:
+        for candidate in java_home_candidates():
             if candidate.exists():
                 os.environ["JAVA_HOME"] = str(candidate)
+                prepend_path(candidate / "bin")
                 break
 
     java = shutil.which("java")
@@ -220,27 +241,90 @@ def default_vncorenlp_dir() -> Path:
     return Path.home() / ".pdf-entity-highlighter" / "vncorenlp"
 
 
+def prepare_default_vncorenlp_model(progress_callback: ModelProgressCallback | None = None) -> Path:
+    bundled_dir = bundled_vncorenlp_dir()
+    if not bundled_dir:
+        return default_vncorenlp_dir()
+
+    target_dir = default_vncorenlp_dir()
+    if vncorenlp_model_exists(target_dir):
+        return target_dir
+
+    copy_vncorenlp_model(bundled_dir, target_dir, progress_callback=progress_callback)
+    return target_dir
+
+
 def vncorenlp_model_exists(model_dir: str | Path) -> bool:
     model_dir = Path(model_dir)
-    return (model_dir / "VnCoreNLP-1.2.jar").exists() and (model_dir / "models").is_dir()
+    return all((model_dir / relative_path).exists() for relative_path in VNCORENLP_MODEL_FILES)
 
 
 def download_vncorenlp_model(model_dir: str | Path) -> None:
     model_dir = Path(model_dir).expanduser().resolve()
-    files = {
-        "VnCoreNLP-1.2.jar": "VnCoreNLP-1.2.jar",
-        "models/wordsegmenter/vi-vocab": "models/wordsegmenter/vi-vocab",
-        "models/wordsegmenter/wordsegmenter.rdr": "models/wordsegmenter/wordsegmenter.rdr",
-        "models/postagger/vi-tagger": "models/postagger/vi-tagger",
-        "models/ner/vi-500brownclusters.xz": "models/ner/vi-500brownclusters.xz",
-        "models/ner/vi-ner.xz": "models/ner/vi-ner.xz",
-        "models/ner/vi-pretrainedembeddings.xz": "models/ner/vi-pretrainedembeddings.xz",
-    }
 
     base_url = "https://raw.githubusercontent.com/vncorenlp/VnCoreNLP/master"
-    for relative_path, remote_path in files.items():
+    for relative_path, remote_path in VNCORENLP_MODEL_FILES.items():
         destination = model_dir / relative_path
         if destination.exists():
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         urllib.request.urlretrieve(f"{base_url}/{remote_path}", destination)
+
+
+def copy_vncorenlp_model(
+    source_dir: str | Path,
+    target_dir: str | Path,
+    progress_callback: ModelProgressCallback | None = None,
+) -> None:
+    source_dir = Path(source_dir)
+    target_dir = Path(target_dir).expanduser().resolve()
+    total = len(VNCORENLP_MODEL_FILES)
+
+    for index, relative_path in enumerate(VNCORENLP_MODEL_FILES, start=1):
+        source = source_dir / relative_path
+        destination = target_dir / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        if progress_callback:
+            progress_callback(index, total, f"Preparing built-in VnCoreNLP model ({index}/{total})")
+
+
+def resource_root() -> Path:
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if frozen_root:
+        return Path(frozen_root)
+    return Path(__file__).resolve().parents[2]
+
+
+def bundled_vncorenlp_dir() -> Path | None:
+    candidate = resource_root() / "vncorenlp"
+    if vncorenlp_model_exists(candidate):
+        return candidate
+    return None
+
+
+def bundled_java_home() -> Path | None:
+    candidate = resource_root() / "java-runtime"
+    executable = "java.exe" if os.name == "nt" else "java"
+    if (candidate / "bin" / executable).exists():
+        return candidate
+    return None
+
+
+def java_home_candidates() -> tuple[Path, ...]:
+    return (
+        Path("/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"),
+        Path("/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"),
+        Path("/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"),
+        Path("/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home"),
+    )
+
+
+def prepend_path(path: Path) -> None:
+    if not path.exists():
+        return
+    current = os.environ.get("PATH", "")
+    path_text = str(path)
+    entries = current.split(os.pathsep) if current else []
+    if path_text not in entries:
+        os.environ["PATH"] = os.pathsep.join([path_text, *entries])

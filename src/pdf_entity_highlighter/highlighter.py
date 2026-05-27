@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 import fitz
 
@@ -25,6 +25,9 @@ class EntityDetector(Protocol):
 class EntityValidator(Protocol):
     def validate(self, entity: Entity) -> tuple[bool, str | None]:
         """Return whether an entity should be highlighted."""
+
+
+ProgressCallback = Callable[[int, int, str], None]
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,7 @@ def highlight_pdf(
     colors: dict[str, tuple[float, float, float]] | None = None,
     opacity: float = 0.35,
     validator: EntityValidator | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> HighlightResult:
     """Highlight detected entities in a PDF and save a new PDF."""
 
@@ -112,11 +116,22 @@ def highlight_pdf(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc = fitz.open(input_path)
     try:
+        page_total = doc.page_count
+        progress_total = page_total + 1
+        if progress_callback:
+            progress_callback(0, progress_total, "Opened PDF")
+
         for page_index, page in enumerate(doc):
             result.pages_processed += 1
             text = page.get_text("text")
             if not text.strip():
                 result.pages_without_text.append(page_index)
+                if progress_callback:
+                    progress_callback(
+                        page_index + 1,
+                        progress_total,
+                        f"Page {page_index + 1}/{page_total}: no extractable text",
+                    )
                 continue
 
             entities = detector.extract(text, normalized_labels)
@@ -156,7 +171,18 @@ def highlight_pdf(
                     )
                 )
 
+            if progress_callback:
+                progress_callback(
+                    page_index + 1,
+                    progress_total,
+                    f"Page {page_index + 1}/{page_total}: highlighted",
+                )
+
+        if progress_callback:
+            progress_callback(page_total, progress_total, "Saving output PDF")
         doc.save(output_path, garbage=4, deflate=True)
+        if progress_callback:
+            progress_callback(progress_total, progress_total, "Saved output PDF")
     finally:
         doc.close()
 
