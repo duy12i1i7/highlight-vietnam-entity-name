@@ -23,6 +23,10 @@ def test_strict_validator_accepts_common_vietnamese_entities() -> None:
     assert validator.validate(Entity("Đinh Lan Hương", "PER"))[0] is True
     assert validator.validate(Entity("Nha Trang", "LOC"))[0] is True
     assert validator.validate(Entity("Việt Nam", "LOC"))[0] is True
+    assert validator.validate(Entity("phường Hồng Giang", "LOC"))[0] is True
+    assert validator.validate(Entity("thị xã Chũ", "LOC"))[0] is True
+    assert validator.validate(Entity("Tổ dân phố Nguộn Trong", "LOC"))[0] is True
+    assert validator.validate(Entity("tỉnh Bắc Giang Tiền án", "LOC"))[0] is False
 
 
 def test_load_confirmed_entities(tmp_path: Path) -> None:

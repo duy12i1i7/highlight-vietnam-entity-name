@@ -8,6 +8,14 @@ from typing import Callable, Protocol
 import fitz
 
 from pdf_entity_highlighter.ner import Entity
+from pdf_entity_highlighter.ocr import (
+    OcrOptions,
+    OcrPage,
+    find_ocr_text_rects,
+    is_usable_ocr_page,
+    ocr_page,
+    should_ocr_page,
+)
 
 DEFAULT_COLORS: dict[str, tuple[float, float, float]] = {
     "PER": (1.0, 0.84, 0.22),
@@ -28,6 +36,7 @@ class EntityValidator(Protocol):
 
 
 ProgressCallback = Callable[[int, int, str], None]
+OcrPageGetter = Callable[[fitz.Page, OcrOptions], OcrPage]
 
 
 @dataclass(frozen=True)
@@ -46,12 +55,20 @@ class SkippedEntity:
     reason: str
 
 
+@dataclass(frozen=True)
+class OcrFailure:
+    page: int
+    reason: str
+
+
 @dataclass
 class HighlightResult:
     input_path: str
     output_path: str
     pages_processed: int = 0
     pages_without_text: list[int] = field(default_factory=list)
+    ocr_pages: list[int] = field(default_factory=list)
+    ocr_failures: list[OcrFailure] = field(default_factory=list)
     highlights: list[PageHighlight] = field(default_factory=list)
     skipped: list[SkippedEntity] = field(default_factory=list)
 
@@ -69,6 +86,14 @@ class HighlightResult:
             "output_path": self.output_path,
             "pages_processed": self.pages_processed,
             "pages_without_text": [page + 1 for page in self.pages_without_text],
+            "ocr_pages": [page + 1 for page in self.ocr_pages],
+            "ocr_failures": [
+                {
+                    "page": item.page + 1,
+                    "reason": item.reason,
+                }
+                for item in self.ocr_failures
+            ],
             "total_entities": self.total_entities,
             "total_highlights": self.total_highlights,
             "highlights": [
@@ -101,6 +126,8 @@ def highlight_pdf(
     opacity: float = 0.35,
     validator: EntityValidator | None = None,
     progress_callback: ProgressCallback | None = None,
+    ocr_options: OcrOptions | None = None,
+    ocr_page_getter: OcrPageGetter = ocr_page,
 ) -> HighlightResult:
     """Highlight detected entities in a PDF and save a new PDF."""
 
@@ -123,7 +150,27 @@ def highlight_pdf(
 
         for page_index, page in enumerate(doc):
             result.pages_processed += 1
-            text = page.get_text("text")
+            ocr_result: OcrPage | None = None
+            if ocr_options and should_ocr_page(page, ocr_options):
+                if progress_callback:
+                    progress_callback(
+                        page_index,
+                        progress_total,
+                        f"Page {page_index + 1}/{page_total}: running OCR",
+                    )
+                try:
+                    ocr_result = ocr_page_getter(page, ocr_options)
+                    result.ocr_pages.append(page_index)
+                    if is_usable_ocr_page(ocr_result):
+                        text = ocr_result.text
+                    else:
+                        text = ""
+                except Exception as exc:
+                    result.ocr_failures.append(OcrFailure(page=page_index, reason=str(exc)))
+                    text = page.get_text("text")
+            else:
+                text = page.get_text("text")
+
             if not text.strip():
                 result.pages_without_text.append(page_index)
                 if progress_callback:
@@ -151,11 +198,11 @@ def highlight_pdf(
                         )
                         continue
 
-                quads = page.search_for(entity.text, quads=True)
-                if not quads:
+                highlight_regions = find_highlight_regions(page, entity.text, ocr_result)
+                if not highlight_regions:
                     continue
 
-                annot = page.add_highlight_annot(quads)
+                annot = page.add_highlight_annot(highlight_regions)
                 color = palette.get(entity.label, DEFAULT_COLORS["MISC"])
                 annot.set_colors(stroke=color)
                 if hasattr(annot, "set_opacity"):
@@ -167,7 +214,7 @@ def highlight_pdf(
                         page=page_index,
                         text=entity.text,
                         label=entity.label,
-                        matches=len(quads),
+                        matches=len(highlight_regions),
                     )
                 )
 
@@ -187,6 +234,16 @@ def highlight_pdf(
         doc.close()
 
     return result
+
+
+def find_highlight_regions(page: fitz.Page, text: str, ocr_result: OcrPage | None) -> list[fitz.Quad | fitz.Rect]:
+    if ocr_result:
+        regions: list[fitz.Rect] = []
+        for occurrence in find_ocr_text_rects(ocr_result, text):
+            regions.extend(occurrence)
+        return regions
+
+    return list(page.search_for(text, quads=True))
 
 
 def unique_entities(entities: Iterable[Entity]) -> list[Entity]:

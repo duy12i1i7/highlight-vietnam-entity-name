@@ -1,11 +1,11 @@
 # PDF Entity Highlighter
 
-Ứng dụng desktop và CLI để tự động bôi màu tên người, địa danh và các thực thể khác trong file PDF có text layer.
+Ứng dụng desktop và CLI để tự động bôi màu tên người, địa danh và các thực thể khác trong PDF có text layer hoặc PDF scan.
 
 Pipeline:
 
 ```text
-PDF -> trích text từng trang -> VnCoreNLP NER -> strict/confirmed validation -> tìm lại vị trí trong PDF -> thêm highlight annotation -> PDF mới
+PDF -> text layer hoặc OCR tiếng Việt -> VnCoreNLP NER -> strict/confirmed validation -> tìm lại vị trí trong PDF -> thêm highlight annotation -> PDF mới
 ```
 
 ## Cài đặt
@@ -42,6 +42,7 @@ pdf-entity-highlighter-gui
 - Chọn đường dẫn file PDF đầu ra khi xử lý một file.
 - Chọn loại entity cần bôi màu: `PER`, `LOC`, `ORG`, `MISC`.
 - Dùng VnCoreNLP để nhận diện thực thể tiếng Việt.
+- Tự OCR các trang scan bằng Tesseract tiếng Việt.
 - Bật strict validation hoặc dùng confirmed-only list khi không chấp nhận false positive.
 
 ## Chạy bằng CLI
@@ -58,16 +59,36 @@ VnCoreNLP và strict validation được bật sẵn:
 pdf-entity-highlight input.pdf output-highlighted.pdf
 ```
 
+OCR scan được bật ở chế độ tự động. Trang có text layer bình thường sẽ dùng text sẵn có; trang scan hoặc trang có ảnh full-page sẽ được OCR tiếng Việt rồi highlight theo tọa độ OCR.
+
+```bash
+pdf-entity-highlight scan.pdf scan-highlighted.pdf --ocr auto
+```
+
+Các chế độ OCR:
+
+```bash
+pdf-entity-highlight input.pdf output.pdf --ocr never
+pdf-entity-highlight input.pdf output.pdf --ocr always --ocr-dpi 300
+```
+
 Khi chạy từ mã nguồn, VnCoreNLP cần model và Java 1.8+. Có thể tải model bằng:
 
 ```bash
 pdf-entity-highlight input.pdf output-highlighted.pdf --download-vncorenlp
 ```
 
+Khi chạy từ mã nguồn với PDF scan, cần Tesseract và dữ liệu OCR tiếng Việt. Có thể tải dữ liệu tiếng Việt bằng:
+
+```bash
+pdf-entity-highlight scan.pdf scan-highlighted.pdf --download-ocr-data
+```
+
 Trên macOS có thể cài Java bằng:
 
 ```bash
 brew install openjdk@17
+brew install tesseract
 ```
 
 Tắt strict validation nếu cần bắt nhiều candidate hơn:
@@ -123,8 +144,8 @@ VnCoreNLP trả về các nhãn:
 
 ## Lưu ý
 
-- Công cụ này xử lý tốt PDF có thể copy được chữ.
-- PDF scan dạng ảnh cần OCR trước, ví dụ bằng OCRmyPDF, rồi mới chạy highlighter.
+- Công cụ này xử lý PDF có thể copy được chữ và PDF scan dạng ảnh.
+- OCR phụ thuộc chất lượng scan; trang trắng, mặt sau mờ hoặc nhiễu mạnh sẽ bị bỏ qua thay vì đưa vào NER.
 - File gốc không bị sửa; chương trình lưu ra file PDF mới.
 - Không có NER tự động nào đảm bảo tuyệt đối không false positive. Nếu yêu cầu là không bôi sai, hãy dùng `--confirmed-only` với danh sách thực thể đã được kiểm tra.
 
@@ -144,7 +165,7 @@ python scripts/build_app.py
 
 Kết quả nằm trong thư mục `dist/`.
 
-Build desktop sẽ nhúng sẵn VnCoreNLP model và Java runtime vào app, nên người dùng tải release là chạy được luôn mà không phải tải model ở lần mở đầu tiên.
+Build desktop sẽ nhúng sẵn VnCoreNLP model, Java runtime, Tesseract OCR runtime và dữ liệu OCR tiếng Việt vào app, nên người dùng tải release là chạy được luôn mà không phải tải model ở lần mở đầu tiên.
 
 Lưu ý: PyInstaller cần build trên đúng hệ điều hành đích. Muốn có đủ bản Windows, macOS và Ubuntu, dùng workflow GitHub Actions tại `.github/workflows/build-app.yml`; workflow này build artifact riêng cho từng OS.
 

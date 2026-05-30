@@ -35,6 +35,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install Windows OCR runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          Add-Content $env:GITHUB_PATH "$env:ProgramFiles\Tesseract-OCR"
+
+      - name: Install macOS OCR runtime
+        if: runner.os == 'macOS'
+        run: brew install tesseract
+
       - name: Install Ubuntu Qt runtime libraries
         if: runner.os == 'Linux'
         run: |
@@ -50,7 +61,8 @@ jobs:
             libxcb-randr0 \
             libxcb-render-util0 \
             libxcb-xinerama0 \
-            libxcb-xfixes0
+            libxcb-xfixes0 \
+            tesseract-ocr
 
       - name: Install dependencies
         run: |
@@ -65,11 +77,21 @@ jobs:
 
       - name: Self-test packaged app on Windows
         if: runner.os == 'Windows'
-        run: '& "dist/PDF Entity Highlighter/PDF Entity Highlighter.exe" --self-test'
+        run: |
+          & "dist/PDF Entity Highlighter/PDF Entity Highlighter.exe" --self-test
+          & "dist/PDF Entity Highlighter/PDF Entity Highlighter.exe" --self-test-ocr
 
-      - name: Self-test packaged app on macOS and Ubuntu
-        if: runner.os != 'Windows'
-        run: '"dist/PDF Entity Highlighter/PDF Entity Highlighter" --self-test'
+      - name: Self-test packaged app on macOS
+        if: runner.os == 'macOS'
+        run: |
+          "dist/PDF Entity Highlighter.app/Contents/MacOS/PDF Entity Highlighter" --self-test
+          "dist/PDF Entity Highlighter.app/Contents/MacOS/PDF Entity Highlighter" --self-test-ocr
+
+      - name: Self-test packaged app on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          "dist/PDF Entity Highlighter/PDF Entity Highlighter" --self-test
+          "dist/PDF Entity Highlighter/PDF Entity Highlighter" --self-test-ocr
 
       - name: Package Windows build
         if: runner.os == 'Windows'

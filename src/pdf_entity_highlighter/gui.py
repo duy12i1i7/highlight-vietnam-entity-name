@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QProgressBar,
     QSizePolicy,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -37,6 +39,7 @@ from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, HighlightResult, 
 from pdf_entity_highlighter.ner import (
     VnCoreNlpEntityDetector,
 )
+from pdf_entity_highlighter.ocr import OcrOptions, ocr_page
 from pdf_entity_highlighter.validation import (
     ConfirmedEntityDetector,
     StrictEntityValidator,
@@ -58,6 +61,16 @@ def main(argv: list[str] | None = None) -> int:
         detector = VnCoreNlpEntityDetector(download=False)
         entities = detector.extract("Ông Nguyễn Văn A sống tại Hà Nội.", {"PER", "LOC"})
         print(json.dumps([entity.__dict__ for entity in entities], ensure_ascii=False))
+        return 0
+    if "--self-test-ocr" in args:
+        doc = fitz.open()
+        try:
+            page = doc.new_page()
+            page.insert_text((72, 96), "Nguyen Van A o Ha Noi", fontsize=24)
+            result = ocr_page(page, OcrOptions(mode="always", dpi=200))
+            print(json.dumps({"text": result.text[:200], "words": len(result.words)}, ensure_ascii=False))
+        finally:
+            doc.close()
         return 0
 
     app = QApplication(sys.argv if argv is None else argv)
@@ -140,6 +153,7 @@ class HighlightWorker(QObject):
         opacity: float,
         strict: bool,
         confirmed_only_path: Path | None,
+        ocr_options: OcrOptions,
     ) -> None:
         super().__init__()
         self.output_paths = output_paths
@@ -147,6 +161,7 @@ class HighlightWorker(QObject):
         self.opacity = opacity
         self.strict = strict
         self.confirmed_only_path = confirmed_only_path
+        self.ocr_options = ocr_options
 
     def run(self) -> None:
         try:
@@ -198,6 +213,7 @@ class HighlightWorker(QObject):
                     opacity=self.opacity,
                     validator=validator,
                     progress_callback=on_file_progress,
+                    ocr_options=self.ocr_options,
                 )
                 completed_units = file_start + page_counts[input_path] + 1
                 results.append(result)
@@ -208,6 +224,12 @@ class HighlightWorker(QObject):
                 if result.pages_without_text:
                     pages = ", ".join(str(page + 1) for page in result.pages_without_text)
                     self.log.emit(f"Warning: no extractable text on page(s): {pages}")
+                if result.ocr_pages:
+                    pages = ", ".join(str(page + 1) for page in result.ocr_pages)
+                    self.log.emit(f"OCR pages: {pages}")
+                if result.ocr_failures:
+                    pages = ", ".join(f"{item.page + 1}: {item.reason}" for item in result.ocr_failures)
+                    self.log.emit(f"Warning: OCR failed on page(s): {pages}")
                 if result.skipped:
                     self.log.emit(f"Skipped by validation: {len(result.skipped)} candidate(s)")
                 self.progress.emit(completed_units, total_units, f"Completed {index}/{total} file(s)")
@@ -319,11 +341,23 @@ class MainWindow(QMainWindow):
         self.confirmed_only_edit.setPlaceholderText("Optional confirmed entity list")
         self.browse_confirmed_button = QPushButton("Browse")
         self.browse_confirmed_button.clicked.connect(self.choose_confirmed_list)
+        self.ocr_mode_combo = QComboBox()
+        self.ocr_mode_combo.addItem("Auto scanned pages", "auto")
+        self.ocr_mode_combo.addItem("Always OCR", "always")
+        self.ocr_mode_combo.addItem("Text layer only", "never")
+        self.ocr_dpi_spin = QSpinBox()
+        self.ocr_dpi_spin.setRange(150, 450)
+        self.ocr_dpi_spin.setSingleStep(50)
+        self.ocr_dpi_spin.setValue(300)
         accuracy_layout.addWidget(QLabel("NER model"), 0, 0)
         accuracy_layout.addWidget(self.ner_model_label, 0, 1)
         accuracy_layout.addWidget(self.strict_check, 1, 0, 1, 2)
-        accuracy_layout.addWidget(self.confirmed_only_edit, 2, 0)
-        accuracy_layout.addWidget(self.browse_confirmed_button, 2, 1)
+        accuracy_layout.addWidget(QLabel("OCR"), 2, 0)
+        accuracy_layout.addWidget(self.ocr_mode_combo, 2, 1)
+        accuracy_layout.addWidget(QLabel("OCR DPI"), 3, 0)
+        accuracy_layout.addWidget(self.ocr_dpi_spin, 3, 1)
+        accuracy_layout.addWidget(self.confirmed_only_edit, 4, 0)
+        accuracy_layout.addWidget(self.browse_confirmed_button, 4, 1)
         layout.addWidget(accuracy_group)
 
         action_row = QHBoxLayout()
@@ -455,6 +489,11 @@ class MainWindow(QMainWindow):
             self.opacity_spin.value(),
             self.strict_check.isChecked(),
             confirmed_only_path,
+            OcrOptions(
+                mode=self.ocr_mode_combo.currentData(),
+                dpi=self.ocr_dpi_spin.value(),
+                download_data=False,
+            ),
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -478,6 +517,8 @@ class MainWindow(QMainWindow):
         self.browse_confirmed_button.setEnabled(not running)
         self.confirmed_only_edit.setEnabled(not running)
         self.strict_check.setEnabled(not running)
+        self.ocr_mode_combo.setEnabled(not running)
+        self.ocr_dpi_spin.setEnabled(not running)
 
     def append_log(self, message: str) -> None:
         self.log_view.append(message)

@@ -4,6 +4,7 @@ from pathlib import Path
 from pdf_entity_highlighter.ner import (
     Entity,
     bundled_java_home,
+    clean_ner_text,
     entities_from_tagged_tokens,
     entities_from_vncorenlp_annotation,
     prepare_default_vncorenlp_model,
@@ -54,6 +55,12 @@ def test_entities_from_vncorenlp_annotation() -> None:
         Entity("Nguyễn Văn A", "PER"),
         Entity("Hà Nội", "LOC"),
     ]
+
+
+def test_clean_ner_text_removes_low_signal_ocr_noise() -> None:
+    text = "Nguyễn Văn A ở Hà Nội\n@@@ === ---\nCỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"
+
+    assert clean_ner_text(text) == "Nguyễn Văn A ở Hà Nội\nCỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM"
 
 
 def test_prepare_default_vncorenlp_model_copies_bundled_model(tmp_path: Path, monkeypatch) -> None:

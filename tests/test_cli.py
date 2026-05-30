@@ -10,9 +10,17 @@ def test_cli_defaults_to_strict_validation() -> None:
     args = build_parser().parse_args(["input.pdf", "output.pdf"])
 
     assert args.strict is True
+    assert args.ocr == "auto"
+    assert args.ocr_language == "vie"
 
 
 def test_cli_can_disable_strict_validation() -> None:
     args = build_parser().parse_args(["input.pdf", "output.pdf", "--no-strict"])
 
     assert args.strict is False
+
+
+def test_cli_can_disable_ocr() -> None:
+    args = build_parser().parse_args(["input.pdf", "output.pdf", "--ocr", "never"])
+
+    assert args.ocr == "never"

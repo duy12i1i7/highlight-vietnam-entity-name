@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pdf_entity_highlighter.highlighter import DEFAULT_COLORS, highlight_pdf
 from pdf_entity_highlighter.ner import VnCoreNlpEntityDetector
+from pdf_entity_highlighter.ocr import OCR_MODES, OcrOptions, default_tessdata_dir, download_tessdata
 from pdf_entity_highlighter.validation import (
     ConfirmedEntityDetector,
     StrictEntityValidator,
@@ -34,6 +35,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
 
     try:
+        if args.download_ocr_data:
+            download_tessdata(args.ocr_tessdata_dir or default_tessdata_dir())
+
         if args.confirmed_only:
             confirmed_entities = load_confirmed_entities(args.confirmed_only)
             if not confirmed_entities:
@@ -63,6 +67,15 @@ def main(argv: list[str] | None = None) -> int:
         colors=colors,
         opacity=args.opacity,
         validator=validator,
+        ocr_options=OcrOptions(
+            mode=args.ocr,
+            language=args.ocr_language,
+            dpi=args.ocr_dpi,
+            psm=args.ocr_psm,
+            min_confidence=args.ocr_min_confidence,
+            download_data=args.download_ocr_data,
+            tessdata_dir=args.ocr_tessdata_dir,
+        ),
     )
 
     if args.report:
@@ -83,6 +96,13 @@ def main(argv: list[str] | None = None) -> int:
     if result.pages_without_text:
         pages = ", ".join(str(page + 1) for page in result.pages_without_text)
         print(f"Warning: no extractable text on page(s): {pages}", file=sys.stderr)
+
+    if result.ocr_pages:
+        pages = ", ".join(str(page + 1) for page in result.ocr_pages)
+        print(f"OCR pages: {pages}")
+    if result.ocr_failures:
+        pages = ", ".join(f"{item.page + 1}: {item.reason}" for item in result.ocr_failures)
+        print(f"Warning: OCR failed on page(s): {pages}", file=sys.stderr)
 
     return 0
 
@@ -118,6 +138,45 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Minimum entity text length to keep. Default: 2.",
+    )
+    parser.add_argument(
+        "--ocr",
+        choices=OCR_MODES,
+        default="auto",
+        help="OCR mode for scanned pages. Default: auto.",
+    )
+    parser.add_argument(
+        "--ocr-language",
+        default="vie",
+        help="Tesseract OCR language. Default: vie.",
+    )
+    parser.add_argument(
+        "--ocr-dpi",
+        type=int,
+        default=300,
+        help="DPI used when rendering scanned pages for OCR. Default: 300.",
+    )
+    parser.add_argument(
+        "--ocr-psm",
+        type=int,
+        default=6,
+        help="Tesseract page segmentation mode. Default: 6.",
+    )
+    parser.add_argument(
+        "--ocr-min-confidence",
+        type=float,
+        default=0.0,
+        help="Minimum Tesseract word confidence to keep. Default: 0.",
+    )
+    parser.add_argument(
+        "--download-ocr-data",
+        action="store_true",
+        help="Download bundled Vietnamese OCR language data before processing.",
+    )
+    parser.add_argument(
+        "--ocr-tessdata-dir",
+        default=None,
+        help="Directory for downloaded OCR language data. Default: ~/.pdf-entity-highlighter/tessdata.",
     )
     parser.add_argument(
         "--vncorenlp-dir",

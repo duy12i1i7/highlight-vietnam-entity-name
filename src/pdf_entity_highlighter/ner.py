@@ -73,8 +73,26 @@ class VnCoreNlpEntityDetector:
         self._min_length = min_length
 
     def extract(self, text: str, labels: set[str]) -> list[Entity]:
+        text = clean_ner_text(text)
+        if not text:
+            return []
+        try:
+            return self._extract_once(text, labels)
+        except Exception:
+            return self._extract_from_chunks(text, labels)
+
+    def _extract_once(self, text: str, labels: set[str]) -> list[Entity]:
         annotation = self._model.annotate_text(text)
         return entities_from_vncorenlp_annotation(annotation, labels, min_length=self._min_length)
+
+    def _extract_from_chunks(self, text: str, labels: set[str]) -> list[Entity]:
+        entities: list[Entity] = []
+        for chunk in split_ner_chunks(text):
+            try:
+                entities.extend(self._extract_once(chunk, labels))
+            except Exception:
+                continue
+        return dedupe_entities(entities)
 
 
 def entities_from_tagged_tokens(
@@ -147,6 +165,45 @@ def entities_from_vncorenlp_annotation(
             tagged_tokens.append((str(token), str(tag)))
 
     return entities_from_tagged_tokens(tagged_tokens, labels, min_length=min_length)
+
+
+def clean_ner_text(text: str) -> str:
+    lines = [normalize_text_line(line) for line in text.splitlines()]
+    return "\n".join(line for line in lines if is_likely_text_line(line))
+
+
+def split_ner_chunks(text: str, max_chars: int = 1800) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    for line in text.splitlines():
+        line = normalize_text_line(line)
+        if not is_likely_text_line(line):
+            continue
+        if current and current_length + len(line) + 1 > max_chars:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+        current.append(line)
+        current_length += len(line) + 1
+
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def normalize_text_line(line: str) -> str:
+    line = re.sub(r"[^\w\sÀ-ỹĐđ,.;:()/%\\-]", " ", line, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def is_likely_text_line(line: str) -> bool:
+    if len(line) < 2:
+        return False
+    letters = re.findall(r"[A-Za-zÀ-ỹĐđ]", line)
+    if len(letters) < 2:
+        return False
+    return len(letters) / max(len(line), 1) >= 0.35
 
 
 def extract_token(item: Any) -> str:

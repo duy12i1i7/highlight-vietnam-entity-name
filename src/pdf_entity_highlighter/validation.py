@@ -54,6 +54,8 @@ class StrictEntityValidator:
         without_prefix = remove_location_prefix(normalized)
         if without_prefix in VIETNAMESE_LOCATIONS:
             return True, None
+        if has_trusted_location_prefix(text):
+            return True, None
 
         return False, "location is not in strict gazetteer"
 
@@ -121,21 +123,26 @@ def strip_accents(text: str) -> str:
 
 
 def remove_location_prefix(key: str) -> str:
-    prefixes = (
-        "thanh pho ",
-        "tp. ",
-        "tp ",
-        "tinh ",
-        "quan ",
-        "huyen ",
-        "thi xa ",
-        "xa ",
-        "phuong ",
-    )
-    for prefix in prefixes:
+    for prefix in LOCATION_PREFIXES:
         if key.startswith(prefix):
             return key[len(prefix) :]
     return key
+
+
+def has_trusted_location_prefix(text: str) -> bool:
+    key = normalize_key(text)
+    if any(word in key for word in LOCATION_STOP_WORDS):
+        return False
+
+    without_prefix = remove_location_prefix(key)
+    if without_prefix == key:
+        return False
+
+    tokens = without_prefix.split()
+    if not 1 <= len(tokens) <= 5:
+        return False
+
+    return any(re.search(r"[A-Za-zÀ-ỹĐđ]", token) for token in tokens)
 
 
 def dedupe_entities(entities: list[Entity]) -> list[Entity]:
@@ -179,6 +186,33 @@ METADATA_WORDS = {
     "ma so",
     "phong ban",
     "so hieu",
+}
+
+LOCATION_PREFIXES = (
+    "thanh pho ",
+    "tp. ",
+    "tp ",
+    "tinh ",
+    "quan ",
+    "huyen ",
+    "thi xa ",
+    "thi tran ",
+    "xa ",
+    "phuong ",
+    "to dan pho ",
+    "tdp ",
+    "duong ",
+)
+
+LOCATION_STOP_WORDS = {
+    "canh sat",
+    "co quan",
+    "cong an",
+    "gioi tinh",
+    "nguoi",
+    "quyet dinh",
+    "tien an",
+    "tien su",
 }
 
 VIETNAMESE_SURNAMES = {
